@@ -1,9 +1,12 @@
-use std::{collections::HashMap, cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::{create_memory::{Memory, create_registers}, instructions::Instruction};
+use crate::{
+    create_memory::{create_registers, Memory},
+    instructions::Instruction,
+};
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-enum RegisterName {
+pub enum RegisterName {
     Ip,  // Instruction Pointer
     Acc, // Accumulator, math values are added here
     R1,
@@ -21,7 +24,7 @@ pub enum CpuError {
     RegisterNameDoesNotExist,
     RegisterOutOfBounds,
     MemoryOutOfBounds,
-    InvalidInstruction
+    InvalidInstruction,
 }
 
 pub struct Cpu {
@@ -45,11 +48,11 @@ impl Cpu {
             RegisterName::R7,
             RegisterName::R8,
         ];
-        let registers: Vec<u16> = create_registers(&register_names.len() * 2);
+        let registers: Vec<u16> = create_registers(register_names.len());
         let register_map = register_names
             .iter()
             .enumerate()
-            .map(|(i, x)| (x.to_owned(), i * 2))
+            .map(|(i, x)| (x.to_owned(), i))
             .collect::<HashMap<_, _>>();
         Cpu {
             memory,
@@ -68,29 +71,62 @@ impl Cpu {
         println!();
     }
 
-    fn get_register(&self, name: &RegisterName) -> Result<&u16, CpuError> {
-        let register_index = self.register_map.get(&name).ok_or(CpuError::RegisterNameDoesNotExist)?;
-        self.registers.get(*register_index).ok_or(CpuError::RegisterOutOfBounds)
+    pub fn view_memory_at(&self, address: usize) {
+        let memory_ref = self.memory.borrow();
+        let next_eight_bytes: Vec<String> = (0..8)
+            .map(|index| {
+                let byte = memory_ref.get(address + index).unwrap();
+                format!("0x{:02x}", byte)
+            })
+            .collect();
+
+        println!("0x{:04x}: {}", address, next_eight_bytes.join(" "));
     }
-    fn set_register(&mut self, name: RegisterName, value: usize) -> Result<(), CpuError> {
-        let register_index: &usize = self.register_map.get(&name).ok_or(CpuError::RegisterNameDoesNotExist)?;
+
+    pub fn get_register(&self, name: &RegisterName) -> Result<&u16, CpuError> {
+        let register_index = self
+            .register_map
+            .get(&name)
+            .ok_or(CpuError::RegisterNameDoesNotExist)?;
+        self.registers
+            .get(*register_index)
+            .ok_or(CpuError::RegisterOutOfBounds)
+    }
+    fn set_register(&mut self, name: &RegisterName, value: usize) -> Result<(), CpuError> {
+        let register_index: &usize = self
+            .register_map
+            .get(&name)
+            .ok_or(CpuError::RegisterNameDoesNotExist)?;
         self.registers[*register_index] = value as u16;
         Ok(())
     }
 
     fn fetch(&mut self) -> Result<u8, CpuError> {
         let next_instruction_address = *self.get_register(&RegisterName::Ip)?;
-        self.set_register(RegisterName::Ip, next_instruction_address as usize + 1)?;
-        let instruction = self.memory.borrow().get(next_instruction_address as usize).copied().ok_or(CpuError::MemoryOutOfBounds);
+        self.set_register(&RegisterName::Ip, next_instruction_address as usize + 1)?;
+        let instruction = self
+            .memory
+            .borrow()
+            .get(next_instruction_address as usize)
+            .copied()
+            .ok_or(CpuError::MemoryOutOfBounds);
         return instruction;
     }
 
     fn fetch16(&mut self) -> Result<u16, CpuError> {
         let next_instruction_address = *self.get_register(&RegisterName::Ip)?;
-        self.set_register(RegisterName::Ip, next_instruction_address as usize + 2)?;
+        self.set_register(&RegisterName::Ip, next_instruction_address as usize + 2)?;
 
-        let byte1 = *self.memory.borrow().get(next_instruction_address as usize).ok_or(CpuError::MemoryOutOfBounds)?;
-        let byte2 = *self.memory.borrow().get(next_instruction_address as usize + 1).ok_or(CpuError::MemoryOutOfBounds)?;
+        let byte1 = *self
+            .memory
+            .borrow()
+            .get(next_instruction_address as usize)
+            .ok_or(CpuError::MemoryOutOfBounds)?;
+        let byte2 = *self
+            .memory
+            .borrow()
+            .get(next_instruction_address as usize + 1)
+            .ok_or(CpuError::MemoryOutOfBounds)?;
         // let instruction = ( byte2 as u16) << 8 | (byte1 as u16); // Little-Endian Version
         let instruction = ((byte1 as u16) << 8) | (byte2 as u16); // Big-Endian Version
 
@@ -100,30 +136,105 @@ impl Cpu {
     fn execute(&mut self, instruction: Instruction) -> Result<(), CpuError> {
         match instruction {
             // Move literal value into r1 register. The literal will be the next 2 bytes in memory (16bit)
-            Instruction::MoveLiteralR1 => {
+            Instruction::MoveLiteralToRegister => {
                 let literal = self.fetch16()?;
-                self.set_register(RegisterName::R1, literal as usize)?;
+                let register_index = (self.fetch()? % self.register_names.len() as u8);
+                let register = self
+                    .register_names
+                    .get(register_index as usize)
+                    .cloned()
+                    .ok_or_else(|| CpuError::RegisterOutOfBounds)?;
+                self.set_register(&register, literal as usize)?;
                 Ok(())
-
-            },
+            }
             // Move literal value into r2 register.
-            Instruction::MoveLiteralR2 => {
-                let literal = self.fetch16()?;
-                self.set_register(RegisterName::R2, literal as usize)?;
-                Ok(())
+            Instruction::MoveRegisterToRegister => {
+                let from_register_index = (self.fetch()? % self.register_names.len() as u8);
+                let from_register = self
+                    .register_names
+                    .get(from_register_index as usize)
+                    .cloned()
+                    .ok_or_else(|| CpuError::RegisterOutOfBounds)?;
 
-            },
+                let to_register_index = (self.fetch()? % self.register_names.len() as u8);
+                let to_register = self
+                    .register_names
+                    .get(to_register_index as usize)
+                    .cloned()
+                    .ok_or_else(|| CpuError::RegisterOutOfBounds)?;
+                let from_value = *self.get_register(&from_register)?;
+
+                self.set_register(&to_register, from_value as usize)?;
+                Ok(())
+            }
             // Add register to register
-            Instruction::AddRegToReg => {
+            Instruction::MoveRegisterToMemory => {
+                let register_index = (self.fetch()? % self.register_names.len() as u8); // Multiple my 2 because reg can hold 2 bytes
+                let register = self
+                    .register_names
+                    .get(register_index as usize)
+                    .cloned()
+                    .ok_or_else(|| CpuError::RegisterOutOfBounds)?;
+                let register_value = *self.get_register(&register)?;
+
+                let first_byte = (register_value & 0xFF) as u8;
+                let second_byte = ((register_value >> 8) & 0xFF) as u8;
+
+                let address = self.fetch16()? as usize;
+                self.memory.borrow_mut()[address] = first_byte; // Big Edian way
+                self.memory.borrow_mut()[address + 1] = second_byte;
+                // self.memory.borrow_mut()[address] = second_byte; // Little Edian way
+                // self.memory.borrow_mut()[address + 1] = first_byte;
+
+                Ok(())
+            }
+            Instruction::MoveMemoryToRegister => {
+                let address = self.fetch16()? as usize;
+
+                let register_index = (self.fetch()? % self.register_names.len() as u8); // Multiple my 2 because reg can hold 2 bytes
+                let register = self
+                    .register_names
+                    .get(register_index as usize)
+                    .cloned()
+                    .ok_or_else(|| CpuError::RegisterOutOfBounds)?;
+
+                let address_byte1 = self.memory.borrow()[address];
+                let address_byte2 = self.memory.borrow()[address + 1];
+
+                // let combined_bytes = ((address_byte1 as u16) << 8) | address_byte2 as u16; // Big
+                let combined_bytes = ((address_byte2 as u16) << 8) | address_byte1 as u16; // Little
+                self.set_register(&register, combined_bytes as usize)?;
+
+                Ok(())
+            }
+            Instruction::AddRegisterToRegister => {
                 let register1 = self.fetch()?;
                 let register2 = self.fetch()?;
-                let register_value1 = *self.registers.get((register1 as usize) * 2 ).ok_or_else(|| CpuError::RegisterOutOfBounds)?;
-                let register_value2 = *self.registers.get((register2 as usize) * 2 ).ok_or_else(|| CpuError::RegisterOutOfBounds)?;
-                self.set_register(RegisterName::Acc, (register_value1 + register_value2) as usize)?;
+                let register_value1 = *self
+                    .registers
+                    .get((register1 as usize))
+                    .ok_or_else(|| CpuError::RegisterOutOfBounds)?;
+                let register_value2 = *self
+                    .registers
+                    .get((register2 as usize))
+                    .ok_or_else(|| CpuError::RegisterOutOfBounds)?;
+                self.set_register(
+                    &RegisterName::Acc,
+                    (register_value1 + register_value2) as usize,
+                )?;
+                Ok(())
+            }
+            Instruction::JumpNotEq => {
+                let value = self.fetch16()?;
+                let address = self.fetch16()?;
+                let register_value = *self.get_register(&RegisterName::Acc)?;
+                if value != register_value {
+                    self.set_register(&RegisterName::Ip, address as usize)?;
+                }
+
                 Ok(())
             }
         }
-        
     }
 
     pub fn step(&mut self) -> Result<(), CpuError> {
@@ -131,5 +242,4 @@ impl Cpu {
         let instruction: Instruction = instruction_as_byte.try_into()?;
         self.execute(instruction)
     }
-    
 }

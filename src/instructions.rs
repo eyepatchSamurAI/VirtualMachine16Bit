@@ -42,7 +42,10 @@ macro_rules! define_instruction {
 }
 
 define_instruction! {
-    MoveLiteralR1 => 0x10,
-    MoveLiteralR2 => 0x11,
-    AddRegToReg => 0x12,
+    MoveLiteralToRegister => 0x10,
+    MoveRegisterToRegister => 0x11,
+    MoveRegisterToMemory => 0x12,
+    MoveMemoryToRegister => 0x13,
+    AddRegisterToRegister => 0x14,
+    JumpNotEq => 0x15,
 }
