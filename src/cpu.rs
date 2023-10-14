@@ -224,8 +224,8 @@ impl Cpu {
         let frame_pointer_address = *self.get_register(&RegisterName::Fp)?;
         self.set_register(&RegisterName::Sp, frame_pointer_address)?;
 
-        self.stack_frame_size = self.pop()?;
-        let mut stack_frame_size = self.stack_frame_size;
+        self.stack_frame_size = self.pop()? >> 8;
+        let stack_frame_size = self.stack_frame_size;
 
         let ip_pop = self.pop()?;
         self.set_register(&RegisterName::Ip, ip_pop)?;
@@ -250,7 +250,7 @@ impl Cpu {
         for _ in 0..number_of_args {
             self.pop()?;
         }
-        stack_frame_size =  stack_frame_size >> 8; // I am doing this because somewhere I have the edianess mixed up
+        // stack_frame_size =  stack_frame_size >> 8; // I am doing this because somewhere I have the edianess mixed up
         println!("DEBUG: {}, {}",frame_pointer_address, stack_frame_size);
         self.set_register(&RegisterName::Fp, frame_pointer_address + stack_frame_size)?;
 
