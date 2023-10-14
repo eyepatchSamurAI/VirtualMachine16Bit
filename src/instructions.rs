@@ -48,4 +48,10 @@ define_instruction! {
     MoveMemoryToRegister => 0x13,
     AddRegisterToRegister => 0x14,
     JumpNotEq => 0x15,
+    PushLiteral => 0x17,
+    PushRegister => 0x18,
+    Pop => 0x1A,
+    CallLiteral => 0x5E,
+    CallRegister => 0x5F,
+    Return => 0x60,
 }
